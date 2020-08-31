@@ -20,8 +20,10 @@ import android.widget.Toast;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Collections;
 
 import ai.onnxruntime.NodeInfo;
+import ai.onnxruntime.OnnxTensor;
 import ai.onnxruntime.OrtEnvironment;
 import ai.onnxruntime.OrtException;
 import ai.onnxruntime.OrtSession;
@@ -30,6 +32,12 @@ public class MainActivity extends AppCompatActivity {
     private TextView textView;
     private static final String ONNX_MODEL_PATH = "file:///android_asset/version-RFB-320_simplified.onnx";
     private static final String TAG_INFO = "ONNX_TEST_INFO";
+    // input dimension
+    private static final int W = 320;
+    private static final int H = 240;
+    // Float model
+    private static final float IMAGE_MEAN = 128.0f;
+    private static final float IMAGE_STD = 128.0f;
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -51,6 +59,29 @@ public class MainActivity extends AppCompatActivity {
             byte[] modelBytes = new byte[modelStream.available()];
             modelStream.read(modelBytes);
 
+            // read image file into bitmap
+            Bitmap bmp = BitmapFactory.decodeStream(getAssets().open("25.jpg"));
+            Bitmap resizedBmp = Bitmap.createScaledBitmap(bmp,W,H,false);
+
+            // create input and output array
+            float[][][][] testData = new float[1][3][H][W];
+            float[][][] outputScores = new float[1][4420][2];
+            float[][][] outputBoxes = new float[1][4420][4];
+
+            // create int array to store int pixel
+            int[] pixelInt= new int[W*H];
+            resizedBmp.getPixels(pixelInt,0,resizedBmp.getWidth(),0,0,resizedBmp.getWidth(),resizedBmp.getHeight());
+
+            // fill in input array
+            for(int i=0;i<W;i++){
+                for(int j=0;j<H;j++){
+                    int pixelValue = pixelInt[i*H+j];
+                    testData[0][0][j][i] = ((pixelValue & 0xFF0000)-IMAGE_MEAN)/IMAGE_STD; //R
+                    testData[0][1][j][i] = ((pixelValue & 0xFF00)-IMAGE_MEAN)/IMAGE_STD; //G
+                    testData[0][2][j][i] = ((pixelValue & 0xFF)-IMAGE_MEAN)/IMAGE_STD; //B
+                }
+            }
+
             try (OrtSession session = env.createSession(modelBytes,opts)){
                 Log.i(TAG_INFO,"Inputs:");
                 for (NodeInfo i : session.getInputInfo().values()) {
@@ -60,7 +91,14 @@ public class MainActivity extends AppCompatActivity {
                 for (NodeInfo i : session.getOutputInfo().values()) {
                     Log.i(TAG_INFO,i.toString());
                 }
-
+                // start inference
+                String inputName = session.getInputNames().iterator().next();
+                try(OnnxTensor test = OnnxTensor.createTensor(env,testData);
+                    OrtSession.Result output = session.run(Collections.singletonMap(inputName,test))){
+                    Log.i(TAG_INFO,"Results: ");
+                    for(int i=0;i<output.size();i++)
+                        Log.i(TAG_INFO,"Output["+i+"]: "+output.get(i).toString());
+                }
             }
         } catch (OrtException | IOException e) {
             e.printStackTrace();
